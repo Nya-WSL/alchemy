@@ -1,0 +1,57 @@
+name: Build
+
+on:
+  # 只在发布标签和手动触发时构建
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build mod jar
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Minecraft 反编译产物体积大、下载慢，缓存后二次构建能省几分钟
+      - name: Cache ForgeGradle
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/caches/forge_gradle
+          key: forgegradle-${{ runner.os }}-${{ hashFiles('gradle.properties') }}
+          restore-keys: |
+            forgegradle-${{ runner.os }}-
+
+      # 本地走腾讯云镜像，GitHub runner 上换成官方源更稳定（只改工作区，不改仓库）
+      - name: Point wrapper at official Gradle distribution
+        run: sed -i 's#https://mirrors.cloud.tencent.com/gradle//#https://services.gradle.org/distributions/#' gradle/wrapper/gradle-wrapper.properties
+
+      - name: Build
+        run: |
+          chmod +x ./gradlew
+          ./gradlew build --console=plain --stacktrace
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: alchemy-jar
+          path: build/libs/*.jar
+          if-no-files-found: error
