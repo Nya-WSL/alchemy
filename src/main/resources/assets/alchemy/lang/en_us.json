@@ -1,0 +1,6 @@
+{
+  "enchantment.alchemy.turn_stone_into_gold": "Transmutation",
+  "enchantment.alchemy.turn_stone_into_gold.desc": "With Silk Touch, mining stone or cobblestone has a chance to turn the drop into an ore block (deepslate variants when mining deepslate).",
+  "commands.alchemy.reload.success": "Config reloaded: %s",
+  "commands.alchemy.reload.failed": "Failed to reload config. Check the format of config/alchemy-common.toml (see log for details)."
+}
