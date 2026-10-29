@@ -87,7 +87,14 @@ public final class TransmutationMath
         return gemChanceFor(level, gemChanceStartLevel, gemChance) > 0.0D;
     }
 
-    private static double clamp01(final double value)
+    /**
+     * 把概率夹到 {@code [0, 1]}，NaN 当 0 处理。
+     * <p>
+     * 公开是为了让 {@code StoneTransmutationModifier} 在施加 Midas 倍率之后重新夹一次：
+     * 倍率会把概率推到 1 以上，而"概率大于 1"虽然等价于必定触发，
+     * 却会让日志和调试输出里出现不可能的值。
+     */
+    public static double clamp01(final double value)
     {
         if (Double.isNaN(value))
         {

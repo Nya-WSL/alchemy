@@ -4,6 +4,7 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import com.nya_wsl.alchemy.Config;
 import com.nya_wsl.alchemy.ModTags;
+import com.nya_wsl.alchemy.api.MidasChanceHooks;
 import com.nya_wsl.alchemy.enchantment.ModEnchantments;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.util.RandomSource;
@@ -40,12 +41,6 @@ public class StoneTransmutationModifier extends LootModifier
 {
     public static final Codec<StoneTransmutationModifier> CODEC = RecordCodecBuilder.create(
             instance -> codecStart(instance).apply(instance, StoneTransmutationModifier::new));
-
-    /**
-     * 第 12 节的 Midas 钩子：将来「镐每级强化 +2% 触发概率」叠加到这里。
-     * 本次恒为 0，留成参数是为了避免以后推翻概率计算。
-     */
-    private static final double BONUS_CHANCE = 0.0D;
 
     protected StoneTransmutationModifier(final LootItemCondition[] conditions)
     {
@@ -107,7 +102,11 @@ public class StoneTransmutationModifier extends LootModifier
         final List<Double> chanceTable = overworld
                 ? Config.overworldChancePerLevel
                 : Config.netherChancePerLevel;
-        final double chance = TransmutationMath.chanceFor(enchantLevel, chanceTable, BONUS_CHANCE);
+        // 倍率由外部模组注册（强化系统的「镐每级强化提升触发概率」走这里）。
+        // 没有注册者时 multiplier 返回 1.0，概率与加钩子之前逐位相同。
+        final double baseChance = TransmutationMath.chanceFor(enchantLevel, chanceTable, 0.0D);
+        final double chance = TransmutationMath.clamp01(
+                baseChance * MidasChanceHooks.multiplier(player, tool, enchantLevel));
         final boolean transmute = chance > 0.0D && random.nextDouble() < chance;
 
         // ---- 第 2–4 步：只在命中时替换掉落物
