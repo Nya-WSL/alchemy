@@ -31,3 +31,6 @@ CODEBUDDY.md
 # python tooling
 __pycache__/
 *.pyc
+
+# 运行期日志
+logs/
