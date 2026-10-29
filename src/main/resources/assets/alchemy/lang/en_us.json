@@ -1,6 +1,8 @@
 {
   "enchantment.alchemy.turn_stone_into_gold": "Transmutation",
   "enchantment.alchemy.turn_stone_into_gold.desc": "With Silk Touch, mining stone or cobblestone has a chance to turn the drop into an ore block (deepslate variants when mining deepslate).",
+  "enchantment.alchemy.mini_protection": "Mini Protection",
+  "enchantment.alchemy.mini_protection.desc": "Reduces incoming damage by a flat 0.5 per level. Levels on all four armor pieces add up, and it stacks with Protection and other vanilla protection enchantments.",
   "commands.alchemy.reload.success": "Config reloaded: %s",
   "commands.alchemy.reload.failed": "Failed to reload config. Check the format of config/alchemy-common.toml (see log for details)."
 }

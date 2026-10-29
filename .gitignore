@@ -27,3 +27,7 @@ forge*changelog.txt
 # codebuddy
 CODEBUDDY.md
 .codebuddy
+
+# python tooling
+__pycache__/
+*.pyc

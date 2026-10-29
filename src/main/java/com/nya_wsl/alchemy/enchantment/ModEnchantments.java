@@ -16,6 +16,10 @@ public final class ModEnchantments
     public static final RegistryObject<Enchantment> TURN_STONE_INTO_GOLD =
             ENCHANTMENTS.register("turn_stone_into_gold", TransmutationEnchantment::new);
 
+    /** 保护mini：每级固定减伤，四件护甲等级相加。 */
+    public static final RegistryObject<Enchantment> MINI_PROTECTION =
+            ENCHANTMENTS.register("mini_protection", MiniProtectionEnchantment::new);
+
     private ModEnchantments()
     {
     }

@@ -90,12 +90,29 @@ public final class Config
             .comment("自动识别时要排除的方块 ID 关键字（包含即排除），例如 \"nether_\"、\"mymod:\"。")
             .defineListAllowEmpty("autoDetectExclude", List.of(), Config::validateExcludeKeyword);
 
+    private static final ForgeConfigSpec.IntValue MINI_PROTECTION_MAX_LEVEL = BUILDER
+            .comment("保护mini 的附魔最大等级。")
+            .defineInRange("miniProtectionMaxLevel", 10, 1, 255);
+
+    private static final ForgeConfigSpec.DoubleValue MINI_PROTECTION_REDUCTION_PER_LEVEL = BUILDER
+            .comment("保护mini 每一级固定减少的伤害点数（1 点 = 半颗心）。",
+                    "四件护甲上的等级会相加：例如每级 0.5、四件都是 10 级，则一次减伤 20 点。")
+            .defineInRange("miniProtectionReductionPerLevel", 0.5D, 0.0D, 100.0D);
+
+    private static final ForgeConfigSpec.BooleanValue MINI_PROTECTION_PLAYERS_ONLY = BUILDER
+            .comment("保护mini 是否只对玩家生效。",
+                    "true：只有玩家能享受减伤（默认）；false：任何穿戴该附魔护甲的生物都生效。")
+            .define("miniProtectionPlayersOnly", true);
+
     static final ForgeConfigSpec SPEC = BUILDER.build();
 
     /** 以下字段在配置加载 / 重载后更新，供运行期快速读取（volatile：重载可能发生在监听线程上）。 */
     public static volatile int maxLevel = 3;
     public static volatile double chancePerLevel = 0.08D;
     public static volatile boolean transmuteAllDrops = false;
+    public static volatile int miniProtectionMaxLevel = 10;
+    public static volatile double miniProtectionReductionPerLevel = 0.5D;
+    public static volatile boolean miniProtectionPlayersOnly = true;
 
     /** 配置里显式写出的原始条目，注册表就绪后再解析，避免加载顺序问题。 */
     private static List<String> explicitOreIds = DEFAULT_ORES;
@@ -305,6 +322,9 @@ public final class Config
         maxLevel = MAX_LEVEL.get();
         chancePerLevel = CHANCE_PER_LEVEL.get();
         transmuteAllDrops = TRANSMUTE_ALL_DROPS.get();
+        miniProtectionMaxLevel = MINI_PROTECTION_MAX_LEVEL.get();
+        miniProtectionReductionPerLevel = MINI_PROTECTION_REDUCTION_PER_LEVEL.get();
+        miniProtectionPlayersOnly = MINI_PROTECTION_PLAYERS_ONLY.get();
         explicitOreIds = List.copyOf(ORES.get());
         autoDetectModOres = AUTO_DETECT_MOD_ORES.get();
         autoDetectWeight = AUTO_DETECT_WEIGHT.get();
@@ -316,6 +336,9 @@ public final class Config
         return "maxLevel=" + maxLevel
                 + ", chancePerLevel=" + chancePerLevel
                 + ", transmuteAllDrops=" + transmuteAllDrops
+                + ", miniProtectionMaxLevel=" + miniProtectionMaxLevel
+                + ", miniProtectionReductionPerLevel=" + miniProtectionReductionPerLevel
+                + ", miniProtectionPlayersOnly=" + miniProtectionPlayersOnly
                 + ", ores=" + ores.size()
                 + ", autoDetectModOres=" + autoDetectModOres
                 + ", autoDetectWeight=" + autoDetectWeight;
