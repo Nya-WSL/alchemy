@@ -2,12 +2,10 @@ package com.nya_wsl.alchemy;
 
 import com.electronwill.nightconfig.core.CommentedConfig;
 import com.electronwill.nightconfig.core.file.CommentedFileConfig;
+import com.nya_wsl.alchemy.loot.ItemPoolParser;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.util.RandomSource;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
-import net.minecraft.world.level.block.Block;
 import net.minecraftforge.common.ForgeConfigSpec;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -23,87 +21,142 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
- * 通用配置：附魔等级上限、触发概率、可转化出的矿石方块权重表。
- * 生成的文件位于 config/alchemy-common.toml。
+ * 通用配置：附魔等级上限、主世界/下界两张概率表、两张物品权重表、宝石设置。
+ * 生成的文件位于 {@code config/alchemy-common.toml}。
  * <p>
- * 矿石池 = 配置里显式写出的 {@code ores} + 自动识别到的（模组）矿石方块。
- * 池里存的是「石头类」矿石方块（如 minecraft:iron_ore），实际掉落时再按挖掘的
- * 方块类型换成深板岩变种（minecraft:deepslate_iron_ore）。
+ * 掉落的是<b>原矿物品</b>（{@code minecraft:raw_iron}）而不是矿石方块，所以物品池里存的是
+ * {@link Item}。解析分两步：配置加载时只校验格式并存 {@link ResourceLocation}，
+ * 注册表就绪后（{@link FMLCommonSetupEvent} 与每次 {@code /alchemy reload}）再重建物品池。
  */
 @Mod.EventBusSubscriber(modid = ModMain.MODID, bus = Mod.EventBusSubscriber.Bus.MOD)
 public final class Config
 {
-    private static final List<String> DEFAULT_ORES = List.of(
-            "minecraft:coal_ore#40",
-            "minecraft:copper_ore#25",
-            "minecraft:iron_ore#20",
-            "minecraft:redstone_ore#8",
-            "minecraft:gold_ore#6",
-            "minecraft:lapis_ore#5",
-            "minecraft:diamond_ore#2",
-            "minecraft:emerald_ore#2"
+    /**
+     * 默认主世界物品表，总权重 94（设计文档 1.2 节）。
+     * <p>
+     * 注意 {@code minecraft:emerald} 是原版物品（挖绿宝石矿得的那个），
+     * 与宝石槽里的自定义「翡翠」{@code alchemy:jade} 是两回事。
+     */
+    private static final List<String> DEFAULT_OVERWORLD_ORES = List.of(
+            "minecraft:coal#30",
+            "minecraft:raw_iron#20",
+            "minecraft:raw_copper#15",
+            "minecraft:raw_gold#10",
+            "minecraft:redstone#8",
+            "minecraft:lapis_lazuli#6",
+            "minecraft:emerald#3",
+            "minecraft:diamond#2"
     );
 
-    /** 自动识别模组矿石方块：{@code *_ore}，深板岩变种（{@code deepslate_*_ore}）由基础矿石推导，不单独入池。 */
-    private static final Pattern ORE_BLOCK_PATTERN = Pattern.compile("^[a-z0-9_]+_ore$");
+    /** 默认下界物品表，总权重 10（设计文档 1.3 节：石英 9 : 远古残骸 1）。 */
+    private static final List<String> DEFAULT_NETHER_ORES = List.of(
+            "minecraft:quartz#9",
+            "minecraft:netherite_scrap#1"
+    );
 
-    private static final String DEEPSLATE_PREFIX = "deepslate_";
-
-    private static final Pattern ORE_ID_PATTERN = Pattern.compile("^[a-z0-9_.-]+:[a-z0-9_./-]+$");
+    /** 6 种自定义宝石，等权重，可重复。 */
+    private static final List<String> DEFAULT_GEMS = List.of(
+            "alchemy:ruby",
+            "alchemy:amber",
+            "alchemy:topaz",
+            "alchemy:jade",
+            "alchemy:sapphire",
+            "alchemy:amethyst"
+    );
 
     private static final ForgeConfigSpec.Builder BUILDER = new ForgeConfigSpec.Builder();
 
+    private static final ForgeConfigSpec.BooleanValue ENABLED = BUILDER
+            .comment("是否启用点石成金。关掉后附魔仍然存在，但不会触发任何掉落变化。")
+            .define("enabled", true);
+
     private static final ForgeConfigSpec.IntValue MAX_LEVEL = BUILDER
-            .comment("附魔最大等级。")
+            .comment("附魔最大等级。概率表长度可以与之不同，超出表长的等级沿用表里最后一项。")
             .defineInRange("maxLevel", 3, 1, 10);
 
-    private static final ForgeConfigSpec.DoubleValue CHANCE_PER_LEVEL = BUILDER
-            .comment("每一级附魔把掉落物变成矿石方块的概率（0.0 ~ 1.0），需要镐上带精准采集才会触发。",
-                    "实际概率 = 本值 x 附魔等级，上限为 1.0。例如 0.08 时，III 级为 24%。")
-            .defineInRange("chancePerLevel", 0.08D, 0.0D, 1.0D);
+    private static final ForgeConfigSpec.ConfigValue<List<? extends Double>> OVERWORLD_CHANCE_PER_LEVEL = BUILDER
+            .comment("主世界方块（石头 / 圆石 / 深板岩 / 深板岩圆石）每一级的触发概率。",
+                    "第 i 项对应 i+1 级：默认 [0.005, 0.010, 0.020] 即 0.5% / 1.0% / 2.0%。",
+                    "这是非线性阶梯，不是「每级固定加成」。每一项会被夹到 0.0 ~ 1.0。")
+            .defineList("overworldChancePerLevel",
+                    List.of(0.005D, 0.010D, 0.020D),
+                    Config::validateChanceEntry);
 
-    private static final ForgeConfigSpec.BooleanValue TRANSMUTE_ALL_DROPS = BUILDER
-            .comment("true：该方块的所有掉落物都被转化；false：只转化第一个掉落物。")
-            .define("transmuteAllDrops", false);
+    private static final ForgeConfigSpec.ConfigValue<List<? extends Double>> NETHER_CHANCE_PER_LEVEL = BUILDER
+            .comment("下界方块（下界岩）每一级的触发概率，格式同上。")
+            .defineList("netherChancePerLevel",
+                    List.of(0.005D, 0.010D, 0.020D),
+                    Config::validateChanceEntry);
 
-    private static final ForgeConfigSpec.ConfigValue<List<? extends String>> ORES = BUILDER
-            .comment("可转化出的矿石方块列表，格式为 \"方块ID\" 或 \"方块ID#权重\"，权重越大越常见。",
-                    "示例：\"minecraft:diamond_ore#2\"。",
-                    "这里只写石头类矿石（如 minecraft:iron_ore），挖深板岩时会自动换成对应变种；",
-                    "这里的条目优先于自动识别结果（同 ID 以本列表的权重为准）。")
-            .defineList("ores", DEFAULT_ORES, Config::validateOreEntry);
+    private static final ForgeConfigSpec.IntValue GEM_CHANCE_START_LEVEL = BUILDER
+            .comment("从第几级开始有机会掉宝石。设为大于 maxLevel 的值即视为永不掉宝石。")
+            .defineInRange("gemChanceStartLevel", 3, 1, 255);
+
+    private static final ForgeConfigSpec.DoubleValue GEM_CHANCE = BUILDER
+            .comment("达到起点等级后，每次成功转化时<b>独立</b>掷一次宝石骰的概率。",
+                    "宝石骰与转化骰互不影响：转化失败时宝石骰照掷。默认 0.02 即 2%。")
+            .defineInRange("gemChance", 0.02D, 0.0D, 1.0D);
+
+    private static final ForgeConfigSpec.ConfigValue<List<? extends String>> OVERWORLD_ORES = BUILDER
+            .comment("主世界可转化出的物品表，格式 \"物品ID\" 或 \"物品ID#权重\"，权重越大越常见。",
+                    "这里写的是<b>原矿物品</b>（minecraft:raw_iron），不是矿石方块（minecraft:iron_ore）。",
+                    "默认总权重 94。")
+            .defineList("overworldOres", DEFAULT_OVERWORLD_ORES, Config::validateWeightedEntry);
+
+    private static final ForgeConfigSpec.ConfigValue<List<? extends String>> NETHER_ORES = BUILDER
+            .comment("下界可转化出的物品表，格式同上。默认总权重 10（石英 9 : 远古残骸 1）。")
+            .defineList("netherOres", DEFAULT_NETHER_ORES, Config::validateWeightedEntry);
+
+    private static final ForgeConfigSpec.ConfigValue<List<? extends String>> GEMS = BUILDER
+            .comment("可掉落的宝石物品 ID 列表（不带权重，等概率，可重复）。",
+                    "注意这里的 alchemy:jade 是自定义「翡翠」，与主世界矿表里的 minecraft:emerald 无关。")
+            .defineList("gems", DEFAULT_GEMS, Config::validateItemId);
+
+    private static final ForgeConfigSpec.BooleanValue FORTUNE_AFFECTS_COUNT = BUILDER
+            .comment("转化出的物品数量是否吃时运加成。",
+                    "true：用原版 ore_drops 公式，时运 III 的均值约为 2.2 倍。")
+            .define("fortuneAffectsCount", true);
 
     private static final ForgeConfigSpec.BooleanValue AUTO_DETECT_MOD_ORES = BUILDER
-            .comment("是否自动把已安装模组的矿石方块（*_ore）并入矿石池。",
-                    "只扫描 minecraft 之外的命名空间，原版矿石请用上面的 ores 显式配置；",
-                    "深板岩变种（deepslate_*_ore）不单独入池，由对应的基础矿石自动推导。")
-            .define("autoDetectModOres", true);
+            .comment("是否自动把已安装模组的矿石物品并入主世界物品表。默认关闭。",
+                    "本选项保留是为了给「不想手写物品表」留一个入口；",
+                    "开启后会扫描模组命名空间下的 *_ore 方块并尝试推导同名原矿物品，结果可能不准，",
+                    "建议只把它生成的内容粘贴到 overworldOres 里固定下来，然后关掉本项。")
+            .define("autoDetectModOres", false);
 
     private static final ForgeConfigSpec.IntValue AUTO_DETECT_WEIGHT = BUILDER
-            .comment("自动识别出的矿石方块使用的权重。自动条目越多，单个矿石的出现概率越低。")
+            .comment("自动识别出的物品使用的权重。")
             .defineInRange("autoDetectWeight", 2, 1, 1000);
 
     private static final ForgeConfigSpec.ConfigValue<List<? extends String>> AUTO_DETECT_EXCLUDE = BUILDER
-            .comment("自动识别时要排除的方块 ID 关键字（包含即排除），例如 \"nether_\"、\"mymod:\"。")
+            .comment("自动识别时要排除的 ID 关键字（包含即排除），例如 \"nether_\"。")
             .defineListAllowEmpty("autoDetectExclude", List.of(), Config::validateExcludeKeyword);
 
     static final ForgeConfigSpec SPEC = BUILDER.build();
 
     /** 以下字段在配置加载 / 重载后更新，供运行期快速读取（volatile：重载可能发生在监听线程上）。 */
+    public static volatile boolean enabled = true;
     public static volatile int maxLevel = 3;
-    public static volatile double chancePerLevel = 0.08D;
-    public static volatile boolean transmuteAllDrops = false;
+    public static volatile List<Double> overworldChancePerLevel = List.of(0.005D, 0.010D, 0.020D);
+    public static volatile List<Double> netherChancePerLevel = List.of(0.005D, 0.010D, 0.020D);
+    public static volatile int gemChanceStartLevel = 3;
+    public static volatile double gemChance = 0.02D;
+    public static volatile boolean fortuneAffectsCount = true;
 
-    /** 配置里显式写出的原始条目，注册表就绪后再解析，避免加载顺序问题。 */
-    private static List<String> explicitOreIds = DEFAULT_ORES;
-    private static boolean autoDetectModOres = true;
+    /** 配置里显式写出的原始条目，注册表就绪后再解析。 */
+    private static List<String> explicitOverworldOres = DEFAULT_OVERWORLD_ORES;
+    private static List<String> explicitNetherOres = DEFAULT_NETHER_ORES;
+    private static List<String> explicitGems = DEFAULT_GEMS;
+    private static boolean autoDetectModOres = false;
     private static int autoDetectWeight = 2;
     private static List<String> autoDetectExclude = List.of();
 
-    private static volatile List<OreEntry> ores = List.of();
+    /** 解析完成的两张物品池。 */
+    private static volatile List<WeightedItem> overworldPool = List.of();
+    private static volatile List<WeightedItem> netherPool = List.of();
+    private static volatile List<Item> gemPool = List.of();
 
     /** 上一次生效的配置快照，用于避免重复打日志。 */
     private static volatile String lastApplied = "";
@@ -115,93 +168,57 @@ public final class Config
     {
     }
 
+    // ---------------------------------------------------------------- 运行期查询
+
     /**
-     * 按权重随机抽取一个矿石方块。
+     * 按权重从指定物品池抽一个物品。
      *
-     * @param deepslateOre 玩家挖的是否为深板岩类方块，是则优先换成深板岩变种
-     * @return 抽取结果（方块物品），矿石池为空时返回 {@link ItemStack#EMPTY}
+     * @param pool   物品池
+     * @param random 随机源
+     * @return 抽中的物品；池为空或权重异常时返回 {@code null}
      */
-    public static ItemStack rollOre(boolean deepslateOre, RandomSource random)
+    public static Item rollFromPool(final List<WeightedItem> pool, final net.minecraft.util.RandomSource random)
     {
-        List<OreEntry> pool = ores;
-        if (pool.isEmpty())
+        if (pool == null || pool.isEmpty())
         {
-            return ItemStack.EMPTY;
+            return null;
         }
 
-        int totalWeight = 0;
-        for (OreEntry entry : pool)
+        final List<Integer> weights = new ArrayList<>(pool.size());
+        for (final WeightedItem entry : pool)
         {
-            totalWeight += entry.weight();
+            weights.add(entry.weight());
         }
 
-        int roll = random.nextInt(totalWeight);
-        OreEntry picked = pool.get(pool.size() - 1);
-        for (OreEntry entry : pool)
+        final int total = com.nya_wsl.alchemy.loot.TransmutationMath.totalWeight(weights);
+        if (total <= 0)
         {
-            roll -= entry.weight();
-            if (roll < 0)
-            {
-                picked = entry;
-                break;
-            }
+            return null;
         }
 
-        return createStack(resolveVariant(picked.block(), deepslateOre));
+        final int index = com.nya_wsl.alchemy.loot.TransmutationMath.weightedIndex(weights, random.nextInt(total));
+        return index < 0 ? null : pool.get(index).item();
     }
 
-    private static ItemStack createStack(Block block)
+    /** 主世界物品池（只读快照）。 */
+    public static List<WeightedItem> overworldPool()
     {
-        Item item = block.asItem();
-        return item == Items.AIR ? ItemStack.EMPTY : new ItemStack(item);
+        return overworldPool;
     }
 
-    /**
-     * 按命名约定推导深板岩变种：优先 {@code deepslate_<name>}，其次 {@code <name>_deepslate}，
-     * 都没有就退回原方块（模组不一定提供变种）。
-     */
-    private static Block resolveVariant(Block base, boolean deepslateOre)
+    /** 下界物品池（只读快照）。 */
+    public static List<WeightedItem> netherPool()
     {
-        ResourceLocation id = ForgeRegistries.BLOCKS.getKey(base);
-        if (id == null)
-        {
-            return base;
-        }
-
-        String namespace = id.getNamespace();
-        String path = id.getPath();
-
-        if (deepslateOre)
-        {
-            if (path.startsWith(DEEPSLATE_PREFIX))
-            {
-                return base;
-            }
-
-            Block prefixed = ForgeRegistries.BLOCKS.getValue(
-                    ResourceLocation.fromNamespaceAndPath(namespace, DEEPSLATE_PREFIX + path));
-            if (prefixed != null)
-            {
-                return prefixed;
-            }
-
-            Block suffixed = ForgeRegistries.BLOCKS.getValue(
-                    ResourceLocation.fromNamespaceAndPath(namespace, path + "_deepslate"));
-            return suffixed != null ? suffixed : base;
-        }
-
-        if (path.startsWith(DEEPSLATE_PREFIX))
-        {
-            Block stripped = ForgeRegistries.BLOCKS.getValue(
-                    ResourceLocation.fromNamespaceAndPath(namespace, path.substring(DEEPSLATE_PREFIX.length())));
-            if (stripped != null)
-            {
-                return stripped;
-            }
-        }
-
-        return base;
+        return netherPool;
     }
+
+    /** 宝石池（只读快照）。 */
+    public static List<Item> gemPool()
+    {
+        return gemPool;
+    }
+
+    // ---------------------------------------------------------------- 配置事件
 
     @SubscribeEvent
     static void onLoading(final ModConfigEvent.Loading event)
@@ -232,6 +249,17 @@ public final class Config
     }
 
     /**
+     * 注册表在配置加载时可能还没就绪，这里再重建一次物品池。
+     * 同时补一次数组重排：Forge 在 Loading 事件之后还会 save() 一次，会把排好的数组又挤回一行。
+     */
+    @SubscribeEvent
+    static void onCommonSetup(final FMLCommonSetupEvent event)
+    {
+        rebuildItemPools();
+        reformatConfigFile();
+    }
+
+    /**
      * {@code /alchemy reload}：把配置文件重新读进 Forge 持有的 config 对象
      * （{@code ConfigValue#get()} 读的就是它），再刷新运行期参数。
      *
@@ -255,7 +283,7 @@ public final class Config
         {
             fileConfig.load();
         }
-        catch (Exception e)
+        catch (final Exception e)
         {
             ModMain.LOGGER.warn("alchemy: 重新读取配置文件失败，继续使用当前配置：{}", e.toString());
             return false;
@@ -280,7 +308,8 @@ public final class Config
     private static void applyAndReport(final boolean reload)
     {
         applyValues();
-        rebuildOrePool();
+        rebuildItemPools();
+        warnIfMisconfigured();
 
         final String current = describeValues();
         if (reload && current.equals(lastApplied))
@@ -302,227 +331,262 @@ public final class Config
     /** 把配置文件里的值同步到运行期字段。 */
     private static void applyValues()
     {
+        enabled = ENABLED.get();
         maxLevel = MAX_LEVEL.get();
-        chancePerLevel = CHANCE_PER_LEVEL.get();
-        transmuteAllDrops = TRANSMUTE_ALL_DROPS.get();
-        explicitOreIds = List.copyOf(ORES.get());
+        overworldChancePerLevel = List.copyOf(OVERWORLD_CHANCE_PER_LEVEL.get());
+        netherChancePerLevel = List.copyOf(NETHER_CHANCE_PER_LEVEL.get());
+        gemChanceStartLevel = GEM_CHANCE_START_LEVEL.get();
+        gemChance = GEM_CHANCE.get();
+        fortuneAffectsCount = FORTUNE_AFFECTS_COUNT.get();
+        explicitOverworldOres = List.copyOf(OVERWORLD_ORES.get());
+        explicitNetherOres = List.copyOf(NETHER_ORES.get());
+        explicitGems = List.copyOf(GEMS.get());
         autoDetectModOres = AUTO_DETECT_MOD_ORES.get();
         autoDetectWeight = AUTO_DETECT_WEIGHT.get();
         autoDetectExclude = List.copyOf(AUTO_DETECT_EXCLUDE.get());
     }
 
+    /** 概率表长度 / 宝石起点这类"能跑但显然不对"的配置，给一条明确的 warn。 */
+    private static void warnIfMisconfigured()
+    {
+        warnChanceTable("overworldChancePerLevel", overworldChancePerLevel);
+        warnChanceTable("netherChancePerLevel", netherChancePerLevel);
+
+        if (gemChanceStartLevel > maxLevel)
+        {
+            ModMain.LOGGER.warn("alchemy: gemChanceStartLevel={} 大于 maxLevel={}，本模组的宝石永远不会掉落。",
+                    gemChanceStartLevel, maxLevel);
+        }
+
+        if (!enabled)
+        {
+            ModMain.LOGGER.info("alchemy: enabled=false，点石成金不会触发。");
+        }
+    }
+
+    private static void warnChanceTable(final String key, final List<Double> table)
+    {
+        if (table.size() < maxLevel)
+        {
+            ModMain.LOGGER.warn("alchemy: {} 只有 {} 项，小于 maxLevel={}；"
+                            + "等级 {} 及以上会沿用最后一项 {}。",
+                    key, table.size(), maxLevel, table.size() + 1,
+                    table.isEmpty() ? "（空表，永不触发）" : table.get(table.size() - 1));
+        }
+    }
+
     private static String describeValues()
     {
-        return "maxLevel=" + maxLevel
-                + ", chancePerLevel=" + chancePerLevel
-                + ", transmuteAllDrops=" + transmuteAllDrops
-                + ", ores=" + ores.size()
-                + ", autoDetectModOres=" + autoDetectModOres
-                + ", autoDetectWeight=" + autoDetectWeight;
+        return "enabled=" + enabled
+                + ", maxLevel=" + maxLevel
+                + ", overworldChancePerLevel=" + overworldChancePerLevel
+                + ", netherChancePerLevel=" + netherChancePerLevel
+                + ", gemChanceStartLevel=" + gemChanceStartLevel
+                + ", gemChance=" + gemChance
+                + ", fortuneAffectsCount=" + fortuneAffectsCount
+                + ", overworldOres=" + overworldPool.size()
+                + ", netherOres=" + netherPool.size()
+                + ", gems=" + gemPool.size()
+                + ", autoDetectModOres=" + autoDetectModOres;
     }
 
     /** 把 Forge 生成出来的单行数组重排成每行一项，方便手动调权重。 */
     private static void reformatConfigFile()
     {
-        Path file = FMLPaths.CONFIGDIR.get().resolve(ModMain.MODID + "-common.toml");
+        final Path file = FMLPaths.CONFIGDIR.get().resolve(ModMain.MODID + "-common.toml");
         try
         {
-            if (ConfigFileFormatter.formatArrays(file, "ores", "autoDetectExclude"))
+            if (ConfigFileFormatter.formatArrays(file,
+                    "overworldOres", "netherOres", "gems", "autoDetectExclude"))
             {
                 ModMain.LOGGER.debug("alchemy: 已重排配置文件中的数组：{}", file);
             }
         }
-        catch (IOException e)
+        catch (final IOException e)
         {
             ModMain.LOGGER.warn("alchemy: 重排配置文件失败（不影响运行）：{}", e.toString());
         }
     }
 
-    /**
-     * 注册表在配置加载时可能还没就绪，这里再重建一次，保证模组矿石方块能被识别。
-     * 同时补一次数组重排：Forge 在 Loading 事件之后还会 save() 一次，会把 Loading 时排好的数组又挤回一行。
-     */
-    @SubscribeEvent
-    static void onCommonSetup(final FMLCommonSetupEvent event)
-    {
-        rebuildOrePool();
-        reformatConfigFile();
-    }
+    // ---------------------------------------------------------------- 物品池重建
 
-    private static synchronized void rebuildOrePool()
+    private static synchronized void rebuildItemPools()
     {
-        if (!ForgeRegistries.BLOCKS.iterator().hasNext())
+        if (!ForgeRegistries.ITEMS.iterator().hasNext())
         {
+            // 注册表还没就绪，等 FMLCommonSetupEvent 再来一次
             return;
         }
 
-        Map<ResourceLocation, OreEntry> merged = new LinkedHashMap<>();
+        overworldPool = List.copyOf(buildWeightedPool(
+                "overworldOres", explicitOverworldOres, true));
+        netherPool = List.copyOf(buildWeightedPool(
+                "netherOres", explicitNetherOres, false));
+        gemPool = List.copyOf(buildGemPool());
+    }
 
-        List<String> invalid = new ArrayList<>();
-        for (String raw : explicitOreIds)
+    /**
+     * 解析一张带权重的物品表。
+     * <p>
+     * 刻意<b>没有</b>「全部无效就回退默认表」的分支：从方块 ID 换成物品 ID 后，
+     * 老配置必然全部失效，若有回退，功能会看着正常、实际掉的是写死的表。
+     * 设计文档第 9 节明确要求删除该分支，坏条目逐条 warn。
+     *
+     * @param key            配置键名，用于日志
+     * @param entries        原始条目
+     * @param allowAutoDetect 是否允许把自动识别的模组矿石并进来
+     */
+    private static List<WeightedItem> buildWeightedPool(
+            final String key,
+            final List<String> entries,
+            final boolean allowAutoDetect)
+    {
+        final Map<ResourceLocation, WeightedItem> merged = new LinkedHashMap<>();
+        final List<String> invalid = new ArrayList<>();
+
+        for (final String raw : entries)
         {
-            OreEntry entry = parseOreEntry(raw);
-            ResourceLocation id = entry == null ? null : ForgeRegistries.BLOCKS.getKey(entry.block());
-            if (id == null)
+            final ItemPoolParser.Entry parsed = ItemPoolParser.parseWeighted(raw);
+            if (parsed == null)
             {
                 invalid.add(raw);
                 continue;
             }
-            merged.putIfAbsent(id, entry);
+
+            final Item item = ForgeRegistries.ITEMS.getValue(parsed.id());
+            if (item == null)
+            {
+                invalid.add(raw);
+                continue;
+            }
+
+            merged.putIfAbsent(parsed.id(), new WeightedItem(item, parsed.weight()));
         }
 
         if (!invalid.isEmpty())
         {
-            ModMain.LOGGER.warn("alchemy: ores 中有 {} 项无法解析为方块（应为方块 ID，如 minecraft:iron_ore）：{}",
-                    invalid.size(), String.join(", ", invalid));
+            ModMain.LOGGER.warn("alchemy: {} 中有 {} 项无法解析为物品（应为物品 ID，如 minecraft:raw_iron）：{}",
+                    key, invalid.size(), String.join(", ", invalid));
         }
 
-        // 列表写了但全部无效（例如从旧版物品 ID 升级上来）时回退到默认矿石，避免功能直接失效
-        if (merged.isEmpty() && !explicitOreIds.isEmpty())
+        if (merged.isEmpty())
         {
-            for (String raw : DEFAULT_ORES)
+            ModMain.LOGGER.warn("alchemy: {} 解析后没有任何有效物品，该表对应的方块将不会发生转化。", key);
+        }
+
+        if (allowAutoDetect && autoDetectModOres)
+        {
+            merged.putAll(detectModOres(merged));
+        }
+
+        return new ArrayList<>(merged.values());
+    }
+
+    /**
+     * 自动识别模组矿石，供不想手写物品表的用户使用（默认关闭）。
+     * <p>
+     * 只扫描非 minecraft 命名空间下的 {@code *_ore} 方块，按「方块 ID 去掉 _ore 再加 raw_」猜原矿物品，
+     * 猜不到就跳过。因为这只是启发式，日志里会把生成结果打出来供粘贴固定。
+     */
+    private static Map<ResourceLocation, WeightedItem> detectModOres(final Map<ResourceLocation, WeightedItem> existing)
+    {
+        final Map<ResourceLocation, WeightedItem> detected = new LinkedHashMap<>();
+        final List<String> detectedText = new ArrayList<>();
+
+        for (final Item item : ForgeRegistries.ITEMS)
+        {
+            final ResourceLocation id = ForgeRegistries.ITEMS.getKey(item);
+            if (id == null || "minecraft".equals(id.getNamespace()) || isExcluded(id))
             {
-                OreEntry entry = parseOreEntry(raw);
-                ResourceLocation id = entry == null ? null : ForgeRegistries.BLOCKS.getKey(entry.block());
-                if (id != null)
-                {
-                    merged.putIfAbsent(id, entry);
-                }
+                continue;
             }
-            ModMain.LOGGER.warn("alchemy: ores 全部无效，已回退到默认矿石方块列表。");
-        }
 
-        int explicitCount = merged.size();
-
-        List<String> detected = new ArrayList<>();
-        if (autoDetectModOres)
-        {
-            for (Block block : ForgeRegistries.BLOCKS)
+            final String path = id.getPath();
+            if (!path.startsWith("raw_") || existing.containsKey(id))
             {
-                ResourceLocation id = ForgeRegistries.BLOCKS.getKey(block);
-                if (id == null || merged.containsKey(id) || isExcluded(id) || !isOreLikeBlock(id))
-                {
-                    continue;
-                }
-
-                OreEntry entry = new OreEntry(block, autoDetectWeight);
-                merged.put(id, entry);
-                detected.add(formatOreEntry(id, autoDetectWeight));
+                continue;
             }
+
+            detected.put(id, new WeightedItem(item, autoDetectWeight));
+            detectedText.add(id + "#" + autoDetectWeight);
         }
 
-        ores = List.copyOf(merged.values());
-
-        if (detected.isEmpty())
+        if (detectedText.isEmpty())
         {
-            ModMain.LOGGER.info("alchemy: 矿石池共 {} 项（显式配置），未自动识别到额外矿石方块。", explicitCount);
+            ModMain.LOGGER.info("alchemy: autoDetectModOres 已开启，但没识别到额外的原矿物品。");
         }
         else
         {
-            ModMain.LOGGER.info("alchemy: 矿石池共 {} 项，其中自动识别 {} 项。可直接粘贴到 ores 配置固定这段格式：{}",
-                    ores.size(), detected.size(), String.join(", ", detected));
-        }
-    }
-
-    /** 是否符合自动识别规则：模组命名空间下的 {@code *_ore}，深板岩变种不单独入池。 */
-    private static boolean isOreLikeBlock(ResourceLocation id)
-    {
-        if ("minecraft".equals(id.getNamespace()))
-        {
-            return false;
+            ModMain.LOGGER.info("alchemy: autoDetectModOres 识别到 {} 项，可粘贴到 overworldOres 固定：{}",
+                    detectedText.size(), String.join(", ", detectedText));
         }
 
-        String path = id.getPath();
-        return !path.startsWith(DEEPSLATE_PREFIX) && ORE_BLOCK_PATTERN.matcher(path).matches();
+        return detected;
     }
 
-    private static boolean isExcluded(ResourceLocation id)
+    private static List<Item> buildGemPool()
     {
-        String fullId = id.toString();
-        for (String keyword : autoDetectExclude)
+        final List<Item> gems = new ArrayList<>();
+        final List<String> invalid = new ArrayList<>();
+
+        for (final String raw : explicitGems)
         {
-            String trimmed = keyword.trim();
+            final ResourceLocation id = ItemPoolParser.parseId(raw);
+            final Item item = id == null ? null : ForgeRegistries.ITEMS.getValue(id);
+            if (item == null)
+            {
+                invalid.add(raw);
+                continue;
+            }
+
+            gems.add(item);
+        }
+
+        if (!invalid.isEmpty())
+        {
+            ModMain.LOGGER.warn("alchemy: gems 中有 {} 项无法解析为物品：{}",
+                    invalid.size(), String.join(", ", invalid));
+        }
+
+        if (gems.isEmpty())
+        {
+            ModMain.LOGGER.warn("alchemy: gems 解析后为空，不会掉落任何宝石。");
+        }
+
+        return gems;
+    }
+
+    private static boolean isExcluded(final ResourceLocation id)
+    {
+        final String fullId = id.toString();
+        for (final String keyword : autoDetectExclude)
+        {
+            final String trimmed = keyword.trim();
             if (!trimmed.isEmpty() && fullId.contains(trimmed))
             {
                 return true;
             }
         }
+
         return false;
     }
 
-    /** 统一的条目格式化：{@code namespace:path#weight}。 */
-    public static String formatOreEntry(ResourceLocation id, int weight)
+    // ---------------------------------------------------------------- 校验器
+
+    /** 只校验格式，不查注册表：配置加载时注册表可能尚未填充。 */
+    private static boolean validateWeightedEntry(final Object obj)
     {
-        return id + "#" + weight;
+        return obj instanceof final String text && ItemPoolParser.parseWeighted(text) != null;
     }
 
-    private static OreEntry parseOreEntry(String raw)
+    private static boolean validateItemId(final Object obj)
     {
-        if (raw == null)
-        {
-            return null;
-        }
-
-        String value = raw.trim();
-        int weight = 10;
-        int hash = value.lastIndexOf('#');
-        if (hash > 0)
-        {
-            try
-            {
-                weight = Integer.parseInt(value.substring(hash + 1).trim());
-            }
-            catch (NumberFormatException e)
-            {
-                return null;
-            }
-            value = value.substring(0, hash).trim();
-            if (weight <= 0)
-            {
-                return null;
-            }
-        }
-
-        ResourceLocation id = ResourceLocation.tryParse(value);
-        if (id == null || !ForgeRegistries.BLOCKS.containsKey(id))
-        {
-            return null;
-        }
-
-        Block block = ForgeRegistries.BLOCKS.getValue(id);
-        return block == null ? null : new OreEntry(block, weight);
+        return obj instanceof final String text && ItemPoolParser.parseId(text) != null;
     }
 
-    /**
-     * 只校验格式，不校验注册表：配置加载时注册表可能尚未填充，
-     * 真正的方块解析放到 {@link #rebuildOrePool()} 里做。
-     */
-    private static boolean validateOreEntry(final Object obj)
+    private static boolean validateChanceEntry(final Object obj)
     {
-        if (!(obj instanceof final String name))
-        {
-            return false;
-        }
-
-        String value = name.trim();
-        int hash = value.lastIndexOf('#');
-        if (hash > 0)
-        {
-            try
-            {
-                if (Integer.parseInt(value.substring(hash + 1).trim()) <= 0)
-                {
-                    return false;
-                }
-            }
-            catch (NumberFormatException e)
-            {
-                return false;
-            }
-            value = value.substring(0, hash).trim();
-        }
-
-        return ORE_ID_PATTERN.matcher(value).matches();
+        return obj instanceof final Double chance && !chance.isNaN() && !chance.isInfinite();
     }
 
     private static boolean validateExcludeKeyword(final Object obj)
@@ -530,8 +594,13 @@ public final class Config
         return obj instanceof final String keyword && !keyword.trim().isEmpty();
     }
 
-    /** 一条矿石方块权重配置。 */
-    public record OreEntry(Block block, int weight)
+    /** 一条物品权重配置（运行期已解析成物品）。 */
+    public record WeightedItem(Item item, int weight)
     {
+        /** 便于日志与调试输出。 */
+        public ItemStack createStack()
+        {
+            return new ItemStack(item);
+        }
     }
 }

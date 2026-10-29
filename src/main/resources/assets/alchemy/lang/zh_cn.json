@@ -1,6 +1,12 @@
 {
   "enchantment.alchemy.turn_stone_into_gold": "点石成金",
-  "enchantment.alchemy.turn_stone_into_gold.desc": "配合精准采集挖掘石头或圆石时，有概率把掉落物变成矿石方块（深板岩会变成深板岩变种）。",
+  "enchantment.alchemy.turn_stone_into_gold.desc": "挖掘石头、圆石、深板岩或下界岩时，有概率把掉落物换成原矿物品；III 级起还有小概率额外掉落宝石。",
+  "item.alchemy.ruby": "红宝石",
+  "item.alchemy.amber": "橙宝石",
+  "item.alchemy.topaz": "黄宝石",
+  "item.alchemy.jade": "翡翠",
+  "item.alchemy.sapphire": "蓝宝石",
+  "item.alchemy.amethyst": "紫宝石",
   "commands.alchemy.reload.success": "配置已重载：%s",
   "commands.alchemy.reload.failed": "配置重载失败：请检查 config/alchemy-common.toml 的格式（详细原因见日志）。"
 }

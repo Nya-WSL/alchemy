@@ -1,6 +1,12 @@
 {
   "enchantment.alchemy.turn_stone_into_gold": "Transmutation",
-  "enchantment.alchemy.turn_stone_into_gold.desc": "With Silk Touch, mining stone or cobblestone has a chance to turn the drop into an ore block (deepslate variants when mining deepslate).",
+  "enchantment.alchemy.turn_stone_into_gold.desc": "Mining stone, cobblestone, deepslate or netherrack has a chance to replace the drops with raw ore items. From level III there is also a small chance to drop a gem.",
+  "item.alchemy.ruby": "Ruby",
+  "item.alchemy.amber": "Amber",
+  "item.alchemy.topaz": "Topaz",
+  "item.alchemy.jade": "Jade",
+  "item.alchemy.sapphire": "Sapphire",
+  "item.alchemy.amethyst": "Amethyst",
   "commands.alchemy.reload.success": "Config reloaded: %s",
   "commands.alchemy.reload.failed": "Failed to reload config. Check the format of config/alchemy-common.toml (see log for details)."
 }
