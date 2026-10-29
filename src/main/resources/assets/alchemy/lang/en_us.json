@@ -1,12 +1,6 @@
 {
   "enchantment.alchemy.turn_stone_into_gold": "Transmutation",
   "enchantment.alchemy.turn_stone_into_gold.desc": "With Silk Touch, mining stone or cobblestone has a chance to turn the drop into an ore block (deepslate variants when mining deepslate).",
-  "enchantment.alchemy.mini_protection": "Mini Protection",
-  "enchantment.alchemy.mini_protection.desc": "Reduces incoming damage by a flat 0.5 per level. Levels on all four armor pieces add up, and it stacks with Protection and other vanilla protection enchantments.",
-  "enchantment.alchemy.double_strike": "Double Strike",
-  "enchantment.alchemy.double_strike.desc": "Landing a sword hit immediately deals a second hit for 50% of the original damage, ignoring the target's invulnerability frames. Each trigger costs double durability.",
-  "death.attack.double_strike": "%1$s was slain by %2$s's double strike",
-  "death.attack.double_strike.item": "%1$s was slain by %2$s's double strike using %3$s",
   "commands.alchemy.reload.success": "Config reloaded: %s",
   "commands.alchemy.reload.failed": "Failed to reload config. Check the format of config/alchemy-common.toml (see log for details)."
 }
