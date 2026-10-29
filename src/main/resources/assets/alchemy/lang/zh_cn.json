@@ -3,6 +3,10 @@
   "enchantment.alchemy.turn_stone_into_gold.desc": "配合精准采集挖掘石头或圆石时，有概率把掉落物变成矿石方块（深板岩会变成深板岩变种）。",
   "enchantment.alchemy.mini_protection": "保护mini",
   "enchantment.alchemy.mini_protection.desc": "每一级固定减少 0.5 点伤害。四件护甲上的等级会相加，可与保护、火焰保护等附魔并存。",
+  "enchantment.alchemy.double_strike": "双重打击",
+  "enchantment.alchemy.double_strike.desc": "用剑命中后立刻再造成一次相当于原伤害 50% 的伤害，无视受击者的无敌帧。每次触发额外消耗一倍耐久。",
+  "death.attack.double_strike": "%1$s 被 %2$s 的双重打击击杀",
+  "death.attack.double_strike.item": "%1$s 被 %2$s 用 %3$s 的双重打击击杀",
   "commands.alchemy.reload.success": "配置已重载：%s",
   "commands.alchemy.reload.failed": "配置重载失败：请检查 config/alchemy-common.toml 的格式（详细原因见日志）。"
 }
